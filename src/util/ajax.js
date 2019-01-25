@@ -71,14 +71,17 @@ class AJAXError extends Error {
     }
 }
 
+function isWorker() {
+    return typeof WorkerGlobalScope !== 'undefined' && typeof self !== 'undefined' &&
+           self instanceof WorkerGlobalScope;
+}
+
 // Ensure that we're sending the correct referrer from blob URL worker bundles.
 // For files loaded from the local file system, `location.origin` will be set
 // to the string(!) "null" (Firefox), or "file://" (Chrome, Safari, Edge, IE),
 // and we will set an empty referrer. Otherwise, we're using the document's URL.
 /* global self, WorkerGlobalScope */
-export const getReferrer = typeof WorkerGlobalScope !== 'undefined' &&
-                           typeof self !== 'undefined' &&
-                           self instanceof WorkerGlobalScope ?
+export const getReferrer = isWorker() ?
     () => self.worker && self.worker.referrer :
     () => {
         const origin = window.location.origin;
@@ -158,7 +161,15 @@ function makeXMLHttpRequest(requestParameters: RequestParameters, callback: Resp
     return { cancel: () => xhr.abort() };
 }
 
-const makeRequest = window.fetch && window.Request && window.AbortController ? makeFetchRequest : makeXMLHttpRequest;
+export const makeRequest = function(requestParameters: RequestParameters, callback: ResponseCallback<any>): Cancelable {
+    if (window.fetch && window.Request && window.AbortController && !/^file:/.test(requestParameters.url)) {
+        return makeFetchRequest(requestParameters, callback);
+    } else if (isWorker() && self.worker && self.worker.actor) {
+        return self.worker.actor.send('getResource', requestParameters, callback);
+    } else {
+        return makeXMLHttpRequest(requestParameters, callback);
+    }
+};
 
 export const getJSON = function(requestParameters: RequestParameters, callback: ResponseCallback<Object>): Cancelable {
     return makeRequest(extend(requestParameters, { type: 'json' }), callback);
